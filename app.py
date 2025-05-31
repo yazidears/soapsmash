@@ -1,187 +1,169 @@
 from flask import Flask, render_template, request, url_for
-from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'soap_smash_epic_secret_key'
+app.config['SECRET_KEY'] = 'minimalist_cool_soap_secret'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 MAX_PLAYERS = 4
 MIN_PLAYERS_TO_START = 2
 
-players_data = {}  # sid: {'player_index': int, 'name': str, 'is_admin': bool}
-screen_sids = set()  # Store SIDs of connected screen(s)
+players_data = {}
+screen_sids = set()
 admin_sid = None
 
 
 def get_player_list_for_update():
     player_list = []
     all_slots = {i: None for i in range(MAX_PLAYERS)}
-
     for sid, data in players_data.items():
         all_slots[data['player_index']] = {
-            'id': data['player_index'],
-            'name': data['name'],
-            'connected': True,
-            'isAdmin': sid == admin_sid,
-            'sid': sid  # Include SID for client-side logic if needed
+            'id': data['player_index'], 'name': data['name'],
+            'connected': True, 'isAdmin': sid == admin_sid, 'sid': sid
         }
-
     for i in range(MAX_PLAYERS):
         if all_slots[i] is None:
             player_list.append({
-                'id': i, 'name': f'Player {i + 1}',
+                'id': i, 'name': f'Join Slot {i + 1}',
                 'connected': False, 'isAdmin': False, 'sid': None
             })
         else:
             player_list.append(all_slots[i])
-
     return player_list
 
 
 def assign_admin_if_none_exists():
     global admin_sid
     if not admin_sid and players_data:
-        lowest_index = float('inf')
+        lowest_index_found = float('inf')
         candidate_admin_sid = None
-        for sid, data in players_data.items():
-            if data['player_index'] < lowest_index:
-                lowest_index = data['player_index']
-                candidate_admin_sid = sid
-
-        if candidate_admin_sid:
+        for sid_iter, data_iter in players_data.items():
+            if data_iter['player_index'] < lowest_index_found:
+                lowest_index_found = data_iter['player_index']
+                candidate_admin_sid = sid_iter
+        if candidate_admin_sid and candidate_admin_sid in players_data:
             admin_sid = candidate_admin_sid
-            if admin_sid in players_data:  # Ensure admin_sid is still valid key
-                players_data[admin_sid]['is_admin'] = True
-                return True
-            else:  # Admin got disconnected right before promotion
-                admin_sid = None
+            players_data[admin_sid]['is_admin'] = True
+            return True
+        admin_sid = None
     return False
 
 
-def broadcast_to_screens(event, data):
-    for sid in screen_sids:
-        emit(event, data, room=sid)
+def broadcast_to_screens(event_name, data_payload):
+    for sid_iter in screen_sids:
+        emit(event_name, data_payload, room=sid_iter)
 
 
 @app.route('/')
-def screen_route_handler():
-    join_url = url_for('join_route_handler', _external=True)
-    return render_template('index.html', mode='screen', join_url=join_url)
+def screen_route_view():
+    join_url_for_qr = url_for('join_route_view', _external=True)
+    return render_template('index.html', mode='screen', join_url=join_url_for_qr)
 
 
 @app.route('/join')
-def join_route_handler():
+def join_route_view():
     return render_template('index.html', mode='controller')
 
 
 @socketio.on('connect')
-def handle_socket_connect():
+def on_socket_connect():
     print(f'Client connected: {request.sid}')
 
 
 @socketio.on('screen_ready_event')
-def handle_screen_is_ready():
+def on_screen_ready():
     screen_sids.add(request.sid)
-    print(f'Screen {request.sid} registered. Total screens: {len(screen_sids)}')
+    print(f'Screen {request.sid} ready. Screens: {len(screen_sids)}')
     emit('update_player_list_event', {'players': get_player_list_for_update()}, room=request.sid)
 
 
 @socketio.on('disconnect')
-def handle_socket_disconnect():
-    print(f'Client disconnected: {request.sid}')
-
-    if request.sid in screen_sids:
-        screen_sids.remove(request.sid)
-        print(f'Screen {request.sid} unregistered. Remaining screens: {len(screen_sids)}')
+def on_socket_disconnect():
+    client_sid_disconnected = request.sid
+    print(f'Client disconnected: {client_sid_disconnected}')
+    if client_sid_disconnected in screen_sids:
+        screen_sids.remove(client_sid_disconnected)
+        print(f'Screen {client_sid_disconnected} left. Screens: {len(screen_sids)}')
         return
 
-    disconnected_player_data = players_data.pop(request.sid, None)
-
-    if disconnected_player_data:
+    player_data_disconnected = players_data.pop(client_sid_disconnected, None)
+    if player_data_disconnected:
         global admin_sid
-
-        was_admin = (request.sid == admin_sid)
-        if was_admin:
+        if client_sid_disconnected == admin_sid:
             admin_sid = None
             assign_admin_if_none_exists()
-
-        print(
-            f"Player {disconnected_player_data['name']} (idx {disconnected_player_data['player_index']}) disconnected.")
+        print(f"Player {player_data_disconnected['name']} left.")
         socketio.emit('update_player_list_event', {'players': get_player_list_for_update()})
 
 
 @socketio.on('request_join_event')
-def handle_player_request_join(data_req):
+def on_request_join(join_data):
     global admin_sid
-    client_sid = request.sid
-    player_name_req = data_req.get('playerName', '').strip()
+    client_sid_joining = request.sid
+    player_name_from_req = join_data.get('playerName', '').strip()
 
-    if client_sid in players_data:
+    if client_sid_joining in players_data:
         emit('join_ack_event', {
-            'success': True, 'playerIndex': players_data[client_sid]['player_index'],
-            'playerName': players_data[client_sid]['name'], 'isAdmin': client_sid == admin_sid
+            'success': True, 'playerIndex': players_data[client_sid_joining]['player_index'],
+            'playerName': players_data[client_sid_joining]['name'],
+            'isAdmin': client_sid_joining == admin_sid
         })
         return
 
     if len(players_data) >= MAX_PLAYERS:
-        emit('join_ack_event', {'success': False, 'message': 'Lobby is full.'})
+        emit('join_ack_event', {'success': False, 'message': 'Lobby full.'})
         broadcast_to_screens('screen_play_sound_event', {'sound': 'error'})
         return
 
-    current_player_indices = {p_data['player_index'] for p_data in players_data.values()}
-    assigned_index = -1
+    current_indices = {p_data['player_index'] for p_data in players_data.values()}
+    new_player_idx = -1
     for i in range(MAX_PLAYERS):
-        if i not in current_player_indices:
-            assigned_index = i
+        if i not in current_indices:
+            new_player_idx = i
             break
 
-    if assigned_index == -1:
-        emit('join_ack_event', {'success': False, 'message': 'Error assigning slot.'})
+    if new_player_idx == -1:
+        emit('join_ack_event', {'success': False, 'message': 'Cannot assign slot.'})
         broadcast_to_screens('screen_play_sound_event', {'sound': 'error'})
         return
 
-    player_name = player_name_req if player_name_req else f"Soap Bar #{assigned_index + 1}"
+    final_player_name = player_name_from_req if player_name_from_req else f"Player {new_player_idx + 1}"
 
-    is_new_admin = False
+    is_this_player_admin = False
     if not admin_sid:
-        admin_sid = client_sid
-        is_new_admin = True
+        admin_sid = client_sid_joining
+        is_this_player_admin = True
 
-    players_data[client_sid] = {
-        'player_index': assigned_index, 'name': player_name, 'is_admin': is_new_admin
+    players_data[client_sid_joining] = {
+        'player_index': new_player_idx, 'name': final_player_name, 'is_admin': is_this_player_admin
     }
 
-    print(f"{player_name} (idx {assigned_index}) joined. Admin: {admin_sid == client_sid}")
-
+    print(f"{final_player_name} (idx {new_player_idx}) joined. Admin: {admin_sid == client_sid_joining}")
     emit('join_ack_event', {
-        'success': True, 'playerIndex': assigned_index,
-        'playerName': player_name, 'isAdmin': client_sid == admin_sid
+        'success': True, 'playerIndex': new_player_idx,
+        'playerName': final_player_name, 'isAdmin': client_sid_joining == admin_sid
     })
-
     socketio.emit('update_player_list_event', {'players': get_player_list_for_update()})
     broadcast_to_screens('screen_play_sound_event', {'sound': 'connected'})
 
 
 @socketio.on('request_start_game_event')
-def handle_admin_request_start_game():
+def on_request_start_game():
     if request.sid == admin_sid:
         if len(players_data) >= MIN_PLAYERS_TO_START:
-            print("Admin started game.")
-            socketio.emit('game_starting_event')  # To all clients
+            print("Admin initiated game start.")
+            socketio.emit('game_starting_event')
             broadcast_to_screens('screen_play_sound_event', {'sound': 'gamestart'})
         else:
-            msg = f'Need at least {MIN_PLAYERS_TO_START} players to start.'
-            emit('lobby_message_event', {'message': msg, 'isError': True}, room=request.sid)
-            broadcast_to_screens('lobby_message_event', {'message': msg, 'isError': True})
+            start_error_msg = f'Requires {MIN_PLAYERS_TO_START} players. Currently {len(players_data)}.'
+            emit('lobby_message_event', {'message': start_error_msg, 'isError': True}, room=request.sid)
+            broadcast_to_screens('lobby_message_event', {'message': start_error_msg, 'isError': True})
             broadcast_to_screens('screen_play_sound_event', {'sound': 'error'})
-
     else:
-        emit('lobby_message_event', {'message': 'Only the admin can start the game.', 'isError': True},
-             room=request.sid)
-        # No sound for this as it's a controller-specific auth issue, not a lobby state error for the screen
+        emit('lobby_message_event', {'message': 'Access denied: Not admin.', 'isError': True}, room=request.sid)
 
 
 if __name__ == '__main__':
     port = 5002
-    print(f"Flask server starting on http://0.0.0.0:{port}")
+    print(f"Soap Smash server running on http://0.0.0.0:{port}")
     socketio.run(app, host='0.0.0.0', port=port, debug=True, allow_unsafe_werkzeug=True)
