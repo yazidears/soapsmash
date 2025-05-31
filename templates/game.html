@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Soap Smash - Deluxe 2D</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+    <style>
+        html, body { margin: 0; padding: 0; overflow: hidden; display: flex;
+                      justify-content: center; align-items: center; width: 100%; height: 100%;
+                      background-color: #2A2F3A; /* A friendly dark blue-grey */ }
+        #game-canvas-container-2d { width: 100%; height: 100%; display: flex;
+                                 justify-content: center; align-items: center; }
+        canvas { display: block; border: 4px solid #E8E8FF; /* Creamy white border */
+                 box-shadow: 0 0 15px rgba(232, 232, 255, 0.5); /* Soft glow */
+                 max-width: 100%; max-height: 100%; object-fit: contain; }
+    </style>
+</head>
+<body>
+    <div id="game-canvas-container-2d"></div>
+    <script>
+        const PLAYER_DIAMETER_2D = 32;
+        const MAX_CHARGE_VAL_2D = 100;
+        const CHARGE_INCREMENT_2D = 2;
+        const DASH_SPEED_FACTOR_2D = 6; // Multiplies normalized charge for dash speed
+        const SLIPPERY_FRICTION_2D = 0.988;
+        const BUMP_STRENGTH_2D = 0.25; // Amount of velocity transferred on bump
+        const DRAIN_HOLE_RADIUS_2D = 40;
+        const ROUND_WIN_TARGET_2D = 2;
+        const ARENA_EDGE_PADDING_2D = PLAYER_DIAMETER_2D;
+
+        const POWERUP_TYPE_LIST_2D = ['BIGGER_SOAP', 'SUPER_SLIP'];
+        const POWERUP_DIAMETER_2D = 20;
+        const POWERUP_ACTIVE_TIME_MS = 6000; // 6 seconds
+
+        let playersList_2D = [];
+        let gameIsSetup_2D = false;
+        let currentArenaConfig_2D = { w: 750, h: 550 };
+        let drainCenterPos_2D;
+        let gameCurrentRound_2D = 1;
+        let roundResultMsg_2D = null;
+        let matchResultMsg_2D = null;
+        let isGameLoopActive_2D = true;
+        let gameStatusMsg_2D = "LOADING SOAP BATTLE...";
+        let p5GameCanvas_2D = null;
+
+        const SOAP_COLORS_2D = [
+            { fill: [255, 105, 180], stroke: [200, 80, 140] }, // Pink
+            { fill: [0, 191, 255], stroke: [0, 150, 200] },   // Deep Sky Blue
+            { fill: [255, 215, 0], stroke: [204, 172, 0] },   // Gold
+            { fill: [50, 205, 50], stroke: [30, 150, 30] }    // Lime Green
+        ];
+        let visualEffects_2D = []; // For particles, etc.
+        let powerupItems_2D = [];
+
+        function setup() {
+            pixelDensity(1); // Or 2 for hidpi, but 1 is safer for performance
+            console.log("GAME.HTML (2D Deluxe): p5 setup. Waiting for INIT.");
+            // loadFont if you have a custom Nintendo-like font
+        }
+
+        function draw() {
+            if (!gameIsSetup_2D || !p5GameCanvas_2D) {
+                if (typeof background === 'function') { background(40,45,58); }
+                if(typeof fill === 'function') {
+                    fill(200); textAlign(CENTER, CENTER); textSize(18); textFont('sans-serif');
+                    text("PREPARING ARENA...", windowWidth/2, windowHeight/2);
+                }
+                return;
+            }
+            if (isGameLoopActive_2D) {
+                runGameLogic();
+            }
+            drawGameVisuals();
+        }
+
+        function initAndDisplayCanvas(canvasWidth, canvasHeight) {
+            p5GameCanvas_2D = createCanvas(canvasWidth, canvasHeight);
+            p5GameCanvas_2D.parent('game-canvas-container-2d');
+            drainCenterPos_2D = createVector(width / 2, height / 2);
+            console.log(`GAME.HTML (2D Deluxe): Canvas live ${width}x${height}`);
+        }
+
+        function startGameWithData(initMessage) {
+            console.log("GAME.HTML (2D Deluxe): INIT_GAME data:", initMessage);
+            if (!initMessage || !initMessage.settings || !initMessage.players) {
+                gameStatusMsg_2D = "Error: Missing init data."; isGameLoopActive_2D = false; return;
+            }
+
+            currentArenaConfig_2D = initMessage.settings;
+            initAndDisplayCanvas(currentArenaConfig_2D.arenaWidth, currentArenaConfig_2D.arenaHeight);
+
+            playersList_2D = [];
+            const numPlayers = initMessage.players.length;
+            const startPositions = calculateStartPositions(numPlayers, width, height, ARENA_EDGE_PADDING_2D + PLAYER_DIAMETER_2D, DRAIN_HOLE_RADIUS_2D * 1.5);
+
+            initMessage.players.forEach((playerData, i) => {
+                if (i < startPositions.length) {
+                    let colorSet = SOAP_COLORS_2D[playerData.id % SOAP_COLORS_2D.length];
+                    playersList_2D.push({
+                        id: playerData.id, name: playerData.name,
+                        pos: startPositions[i].copy(), vel: createVector(0, 0),
+                        baseColor: color(colorSet.fill), strokeColor: color(colorSet.stroke),
+                        diameter: PLAYER_DIAMETER_2D, scale: 1, // For wobble/squish
+                        isCharging: false, chargeAmount: 0,
+                        eliminated: false, wins: 0,
+                        aimDirection: createVector(0, -1), // Default aim
+                        currentInputState: { dx: 0, dy: 0, dash: false },
+                        activePowerupType: null, powerupEndTime: 0,
+                        rotation: 0, angularVelocity: 0 // For spin on bump
+                    });
+                }
+            });
+
+            gameCurrentRound_2D = 1; matchResultMsg_2D = null;
+            startNewRoundActions();
+            gameIsSetup_2D = true; isGameLoopActive_2D = false; // Start paused for countdown
+            gameStatusMsg_2D = `Round ${gameCurrentRound_2D}`;
+            window.parent.postMessage({ type: 'GAME_STATE_UPDATE', payload: { type: 'game_active', round: gameCurrentRound_2D } }, '*');
+            console.log("GAME.HTML (2D Deluxe): Game initialized. Players:", playersList_2D);
+            setTimeout(() => { isGameLoopActive_2D = true; }, 1500); // Countdown before round starts
+        }
+
+        function calculateStartPositions(playerCount, arenaW, arenaH, edgeSafeZone, centerSafeZone) {
+            const positions = [];
+            const anglePart = TWO_PI / playerCount;
+            const ringRadius = min(arenaW, arenaH) * 0.4 - edgeSafeZone;
+
+            for (let i = 0; i < playerCount; i++) {
+                let currentAngle = i * anglePart + random(-PI/8, PI/8); // Slight random offset for less uniformity
+                let x = arenaW / 2 + cos(currentAngle) * ringRadius;
+                let y = arenaH / 2 + sin(currentAngle) * ringRadius;
+                x = constrain(x, edgeSafeZone, arenaW - edgeSafeZone);
+                y = constrain(y, edgeSafeZone, arenaH - edgeSafeZone);
+                positions.push(createVector(x, y));
+            }
+            return positions;
+        }
+
+        function startNewRoundActions() {
+            roundResultMsg_2D = null;
+            gameStatusMsg_2D = `Round ${gameCurrentRound_2D} - Ready!`;
+            const startPositions = calculateStartPositions(playersList_2D.length, width, height, ARENA_EDGE_PADDING_2D + PLAYER_DIAMETER_2D, DRAIN_HOLE_RADIUS_2D * 1.5);
+            playersList_2D.forEach((p, i) => {
+                p.eliminated = false;
+                p.pos = startPositions[i % startPositions.length] ? startPositions[i % startPositions.length].copy() : createVector(random(width),random(height));
+                p.vel.set(0,0); p.isCharging = false; p.chargeAmount = 0;
+                p.diameter = PLAYER_DIAMETER_2D; p.scale = 1;
+                p.activePowerupType = null; p.powerupEndTime = 0; p.rotation = 0; p.angularVelocity = 0;
+                p.aimDirection = createVector( (i%2 - 0.5) * 2, ( (i+1)%2 -0.5) * 2).normalize(); // Vary initial aim
+            });
+            powerupItems_2D = [];
+            if (random() < 0.7) spawnNewPowerup(); // Chance to spawn powerup
+
+            isGameLoopActive_2D = false;
+            setTimeout(() => { gameStatusMsg_2D = `Round ${gameCurrentRound_2D}`; isGameLoopActive_2D = true; }, 2000); // 2s "Ready" time
+        }
+
+        function managePlayerInput(playerId, input) {
+            const p = playersList_2D.find(player => player.id === playerId);
+            if (p && !p.eliminated) {
+                p.currentInputState = input;
+                if (abs(input.dx) > 0.1 || abs(input.dy) > 0.1) {
+                    p.aimDirection.set(input.dx, input.dy).normalize();
+                }
+                if (input.dash && !p.isCharging) { p.isCharging = true; p.chargeAmount = 0;}
+                else if (!input.dash && p.isCharging) { p.isCharging = false; activateDash(p); }
+            }
+        }
+
+        function activateDash(p) {
+            if (p.aimDirection.magSq() === 0) p.aimDirection.set(0, -1); // Default if somehow no aim
+
+            let finalDashSpeed = (p.chargeAmount / MAX_CHARGE_VAL_2D) * DASH_SPEED_FACTOR_2D;
+            if(p.activePowerupType === 'SUPER_SLIP') finalDashSpeed *= 1.5; // Super Slip also gives faster dash
+
+            p.vel.add(p.aimDirection.copy().mult(finalDashSpeed));
+            p.chargeAmount = 0;
+            p.scale = 1.3; // Squish/Dash effect
+            createVisualEffect('dash', p.pos.copy(), p.aimDirection.copy(), p.baseColor);
+        }
+
+        function spawnNewPowerup() {
+            if (powerupItems_2D.length > 1) return; // Limit active powerups
+            let type = random(POWERUP_TYPE_LIST_2D);
+            let pos = createVector(random(width*0.2, width*0.8), random(height*0.2, height*0.8));
+            // Ensure not too close to drain
+            while(dist(pos.x, pos.y, drainCenterPos_2D.x, drainCenterPos_2D.y) < DRAIN_HOLE_RADIUS_2D * 2) {
+                pos = createVector(random(width*0.2, width*0.8), random(height*0.2, height*0.8));
+            }
+            powerupItems_2D.push({pos, type, diameter: POWERUP_DIAMETER_2D, collected: false, birthTime: millis() });
+        }
+
+        function runGameLogic() {
+            const currentTime = millis();
+            playersList_2D.forEach(p => {
+                if (p.eliminated) return;
+
+                if (p.isCharging) {
+                    p.chargeAmount = min(p.chargeAmount + CHARGE_INCREMENT_2D, MAX_CHARGE_VAL_2D);
+                    p.vel.mult(0.96); // Slow down while charging
+                    p.scale = 1 + (p.chargeAmount / MAX_CHARGE_VAL_2D) * 0.15; // Swell effect
+                } else {
+                    p.scale = lerp(p.scale, 1, 0.15); // Return to normal scale
+                }
+
+                // Apply aimed movement only if NOT charging and joystick is used
+                // This is a more direct control scheme if preferred over dash-only.
+                // if (!p.isCharging && p.aimDirection.magSq() > 0 && (abs(p.currentInputState.dx) > 0.1 || abs(p.currentInputState.dy) > 0.1)) {
+                //    p.vel.add(p.aimDirection.copy().mult(0.3)); // Gentle push
+                // }
+
+                p.pos.add(p.vel);
+                let currentFriction = (p.activePowerupType === 'SUPER_SLIP') ? 0.995 : SLIPPERY_FRICTION_2D;
+                p.vel.mult(currentFriction);
+                p.rotation += p.angularVelocity;
+                p.angularVelocity *= 0.95; // Dampen spin
+
+                // Arena bounds - more "bouncy"
+                if (p.pos.x < p.diameter/2*p.scale) { p.pos.x = p.diameter/2*p.scale; p.vel.x *= -0.7; p.angularVelocity += p.vel.y * 0.01;}
+                else if (p.pos.x > width - p.diameter/2*p.scale) { p.pos.x = width - p.diameter/2*p.scale; p.vel.x *= -0.7; p.angularVelocity -= p.vel.y * 0.01;}
+                if (p.pos.y < p.diameter/2*p.scale) { p.pos.y = p.diameter/2*p.scale; p.vel.y *= -0.7; p.angularVelocity -= p.vel.x * 0.01;}
+                else if (p.pos.y > height - p.diameter/2*p.scale) { p.pos.y = height - p.diameter/2*p.scale; p.vel.y *= -0.7; p.angularVelocity += p.vel.x * 0.01;}
+
+                if (dist(p.pos.x, p.pos.y, drainCenterPos_2D.x, drainCenterPos_2D.y) < DRAIN_HOLE_RADIUS_2D - p.diameter/4*p.scale) {
+                    p.eliminated = true; createVisualEffect('splash', p.pos.copy(), null, p.baseColor);
+                }
+
+                powerupItems_2D.forEach(item => {
+                    if(!item.collected && dist(p.pos.x, p.pos.y, item.pos.x, item.pos.y) < p.diameter/2*p.scale + item.diameter/2){
+                        item.collected = true;
+                        p.activePowerupType = item.type;
+                        p.powerupEndTime = currentTime + POWERUP_ACTIVE_TIME_MS;
+                        if(item.type === 'BIGGER_SOAP') p.diameter = PLAYER_DIAMETER_2D * 1.5;
+                        createVisualEffect('powerup_collect', p.pos.copy(), null, p.baseColor);
+                    }
+                });
+                if(p.powerupEndTime < currentTime && p.activePowerupType){
+                    if(p.activePowerupType === 'BIGGER_SOAP') p.diameter = PLAYER_DIAMETER_2D; // Reset size
+                    p.activePowerupType = null;
+                }
+            });
+            powerupItems_2D = powerupItems_2D.filter(item => !item.collected);
+            if (powerupItems_2D.length === 0 && frameCount % 450 === 0) spawnNewPowerup(); // Spawn new one if none exist after a while
+
+
+            for (let i = 0; i < playersList_2D.length; i++) {
+                if (playersList_2D[i].eliminated) continue;
+                for (let j = i + 1; j < playersList_2D.length; j++) {
+                    if (playersList_2D[j].eliminated) continue;
+                    resolvePlayerCollisions(playersList_2D[i], playersList_2D[j]);
+                }
+            }
+            updateVisualEffects();
+            checkAndProcessRoundEnd();
+        }
+
+        function resolvePlayerCollisions(p1, p2){
+            let diff = p5.Vector.sub(p2.pos, p1.pos);
+            let distSq = diff.magSq();
+            let sumRadii = (p1.diameter/2*p1.scale) + (p2.diameter/2*p2.scale);
+
+            if (distSq < sumRadii * sumRadii) {
+                let distance = sqrt(distSq) || 0.01; // Avoid division by zero
+                let normal = diff.copy().div(distance);
+                let overlap = sumRadii - distance;
+
+                p1.pos.sub(normal.copy().mult(overlap / 2));
+                p2.pos.add(normal.copy().mult(overlap / 2));
+
+                let vel1 = p1.vel.copy();
+                let vel2 = p2.vel.copy();
+                let relVel = p5.Vector.sub(vel1, vel2);
+                let velAlongNormal = relVel.dot(normal);
+
+                if (velAlongNormal > 0) return; // Separating or perpendicular
+
+                let restitution = 0.6; // Bounciness
+                let j = -(1 + restitution) * velAlongNormal;
+                // For simplicity, assume equal mass, so j is directly applied.
+                // Could use actual mass if defined: j /= (1/p1.mass + 1/p2.mass);
+
+                let impulse = normal.mult(j * BUMP_STRENGTH_2D); // BUMP_STRENGTH acts as mass factor here
+
+                p1.vel.sub(impulse);
+                p2.vel.add(impulse);
+
+                // Add some spin
+                p1.angularVelocity += random(-0.05, 0.05) * j;
+                p2.angularVelocity += random(-0.05, 0.05) * j;
+
+                createVisualEffect('bump', p1.pos.copy().add(normal.copy().mult(p1.diameter/2*p1.scale)), normal, color(200,200,200));
+            }
+        }
+
+
+        function checkAndProcessRoundEnd() {
+            const activePlayers = playersList_2D.filter(p => !p.eliminated);
+            if (activePlayers.length <= 1 && !roundResultMsg_2D && !matchResultMsg_2D) {
+                isGameLoopActive_2D = false;
+                if (activePlayers.length === 1) {
+                    roundResultMsg_2D = activePlayers[0];
+                    roundResultMsg_2D.wins++;
+                    gameStatusMsg_2D = `${roundResultMsg_2D.name} WINS ROUND ${gameCurrentRound_2D}!`;
+                } else { gameStatusMsg_2D = `ROUND ${gameCurrentRound_2D}: IT'S A DRAW!`; }
+                console.log(gameStatusMsg_2D);
+
+                if (roundResultMsg_2D && roundResultMsg_2D.wins >= ROUND_WIN_TARGET_2D) {
+                    matchResultMsg_2D = roundResultMsg_2D;
+                    gameStatusMsg_2D = `🌟 ${matchResultMsg_2D.name} IS THE ULTIMATE SOAP! 🌟`;
+                    window.parent.postMessage({ type: 'GAME_STATE_UPDATE', payload: {
+                        type: 'match_over', winnerName: matchResultMsg_2D.name,
+                        scores: playersList_2D.map(p=>({name: p.name, score: p.wins, id: p.id }))
+                    } }, '*');
+                     setTimeout(() => window.parent.postMessage({ type: 'GAME_OVER_REQUEST_LOBBY_RESET' }, '*'), 5000);
+                } else {
+                    gameCurrentRound_2D++;
+                    window.parent.postMessage({ type: 'GAME_STATE_UPDATE', payload: {
+                        type: 'round_over', winnerName: roundResultMsg_2D ? roundResultMsg_2D.name : 'Draw',
+                        roundJustEnded: gameCurrentRound_2D -1,
+                        scores: playersList_2D.map(p=>({name:p.name, score:p.wins, id:p.id}))
+                    } }, '*');
+                    setTimeout(() => { startNewRoundActions(); }, 3500);
+                }
+            }
+        }
+
+        function createVisualEffect(type, pos, dir, col) {
+            if (type === 'dash') {
+                for (let i = 0; i < 10; i++) {
+                    visualEffects_2D.push({
+                        type: 'particle', pos: pos.copy().add(random(-5,5), random(-5,5)),
+                        vel: dir.copy().mult(random(-1,-3)).rotate(random(-0.3,0.3)),
+                        color: color(red(col),green(col),blue(col), random(100,200)),
+                        size: random(3,8), life: 20
+                    });
+                }
+            } else if (type === 'bump') {
+                 for (let i = 0; i < 15; i++) {
+                    visualEffects_2D.push({
+                        type: 'particle', pos: pos.copy(),
+                        vel: p5.Vector.random2D().mult(random(1,4)),
+                        color: color(red(col),green(col),blue(col), random(150,220)),
+                        size: random(2,6), life: 25
+                    });
+                }
+            } else if (type === 'splash') {
+                for (let i = 0; i < 30; i++) { // More particles for splash
+                    visualEffects_2D.push({
+                        type: 'particle', pos: pos.copy(),
+                        vel: p5.Vector.random2D().mult(random(0.5,3)), // Slower, wider spread
+                        color: color(100,150,255, random(80,180)), // Watery blue
+                        size: random(4,10), life: 40
+                    });
+                }
+            } else if (type === 'powerup_collect') {
+                 for (let i = 0; i < 20; i++) {
+                    visualEffects_2D.push({
+                        type: 'particle', pos: pos.copy(),
+                        vel: p5.Vector.random2D().mult(random(2,5)), // outward burst
+                        color: color(red(col)+50,green(col)+50,blue(col)-50, random(180,250)), // Brighter
+                        size: random(3,7), life: 30
+                    });
+                }
+            }
+        }
+
+        function updateVisualEffects(){
+            for(let i = visualEffects_2D.length -1; i >=0; i--){
+                let eff = visualEffects_2D[i];
+                eff.pos.add(eff.vel);
+                eff.vel.mult(0.95); // Friction for particles
+                eff.life--;
+                if(eff.life <=0) visualEffects_2D.splice(i,1);
+            }
+        }
+
+        function drawGameVisuals() {
+            // Background - "Shower Floor"
+            background(180, 210, 230); // Light cyan/blue
+            for (let i = 0; i < width; i += 50) {
+                for (let j = 0; j < height; j += 50) {
+                    stroke(160, 190, 210); strokeWeight(2);
+                    fill((i / 50 + j / 50) % 2 === 0 ? color(200, 225, 240) : color(190, 215, 230));
+                    rect(i, j, 50, 50);
+                }
+            }
+
+            // Drain
+            noStroke();
+            fill(80, 80, 90); ellipse(drainCenterPos_2D.x, drainCenterPos_2D.y, DRAIN_HOLE_RADIUS_2D * 2.2);
+            fill(60, 60, 70); ellipse(drainCenterPos_2D.x, drainCenterPos_2D.y, DRAIN_HOLE_RADIUS_2D * 1.8);
+            fill(40, 40, 50); ellipse(drainCenterPos_2D.x, drainCenterPos_2D.y, DRAIN_HOLE_RADIUS_2D * 1.2);
+            for(let i=0; i < 8; i++){ // Drain grate lines
+                push();
+                translate(drainCenterPos_2D.x, drainCenterPos_2D.y);
+                rotate(i * PI/4);
+                stroke(30,30,40,150); strokeWeight(3);
+                line(0, -DRAIN_HOLE_RADIUS_2D*0.5, 0, DRAIN_HOLE_RADIUS_2D*0.5);
+                pop();
+            }
+
+            // Powerups
+            powerupItems_2D.forEach(item => {
+                push();
+                translate(item.pos.x, item.pos.y);
+                let pulse = sin( (millis() - item.birthTime) * 0.005 ) * 3 + item.diameter * 0.9;
+                if(item.type === 'BIGGER_SOAP') fill(255,69,0,200); // Orangered
+                else if(item.type === 'SUPER_SLIP') fill(135,206,250,200); // Lightskyblue
+                noStroke(); ellipse(0,0,pulse, pulse);
+                fill(255); textAlign(CENTER,CENTER); textSize(pulse*0.5); textFont('sans-serif');
+                text(item.type === 'BIGGER_SOAP' ? 'S+' : 'SPD', 0,1);
+                pop();
+            });
+
+            // Players - "Soaps"
+            playersList_2D.forEach(p => {
+                if (p.eliminated && !matchResultMsg_2D) return;
+
+                push();
+                translate(p.pos.x, p.pos.y);
+                rotate(p.rotation); // Apply spin
+                scale(p.scale); // Apply squish/swell
+
+                // Soap Shadow
+                noStroke(); fill(0,0,0,30);
+                ellipse(2,3, p.diameter, p.diameter); // Offset shadow
+
+                // Soap Body
+                strokeWeight(2.5); stroke(p.strokeColor); fill(p.baseColor);
+                ellipse(0, 0, p.diameter, p.diameter);
+
+                // Eyes - Nintendo style "dots" or simple ovals
+                let eyeOffsetX = p.diameter * 0.2;
+                let eyeOffsetY = -p.diameter * 0.05;
+                let eyeSize = p.diameter * 0.18;
+                let pupilSize = eyeSize * 0.5;
+
+                // Orient eyes with aimDirection (or velocity if not aiming)
+                let lookDir = p.aimDirection.copy();
+                if (p.isCharging || p.vel.magSq() < 0.1) { // If charging or still, use aim
+                   // lookDir is already p.aimDirection
+                } else { // If moving and not charging, use velocity
+                    lookDir = p.vel.copy().normalize();
+                }
+
+                push(); // Eye rotation scope
+                rotate(lookDir.heading()); // Make eyes look in the direction
+
+                fill(255); noStroke(); // Eye Whites
+                ellipse(-eyeOffsetX, eyeOffsetY, eyeSize*1.2, eyeSize*1.4); // Slightly oval, larger whites
+                ellipse(eyeOffsetX, eyeOffsetY, eyeSize*1.2, eyeSize*1.4);
+
+                fill(0); // Pupils
+                ellipse(-eyeOffsetX, eyeOffsetY, pupilSize, pupilSize);
+                ellipse(eyeOffsetX, eyeOffsetY, pupilSize, pupilSize);
+                pop(); // End eye rotation
+
+                // Charging Animation
+                if (p.isCharging && p.chargeAmount > 0) {
+                    let chargeRatio = p.chargeAmount / MAX_CHARGE_VAL_2D;
+                    for (let i = 0; i < 5 + chargeRatio * 10; i++) {
+                        let ang = random(TWO_PI);
+                        let dist = p.diameter/2 * (1 + chargeRatio * 0.3) + random(chargeRatio * 5);
+                        let sz = random(1, 3) + chargeRatio * 4;
+                        fill(255, 255, 255, random(50, 150) * (1 - chargeRatio/2) ); // Bubbles fade slightly as charge maxes
+                        ellipse(cos(ang) * dist, sin(ang) * dist, sz, sz);
+                    }
+                }
+                // Powerup Visual on Player
+                if(p.activePowerupType){
+                    noFill();
+                    if(p.activePowerupType === 'BIGGER_SOAP') stroke(255,69,0,180);
+                    else if(p.activePowerupType === 'SUPER_SLIP') stroke(135,206,250,180);
+                    strokeWeight(3 + sin(frameCount*0.2)*1.5);
+                    ellipse(0,0, p.diameter + 8, p.diameter + 8); // Pulsing aura
+                }
+
+                pop(); // End player transform
+
+                // Player Name & Score (Below)
+                fill(p.strokeColor); // Text color matches dark outline
+                textAlign(CENTER, TOP); textSize(11); noStroke();
+                textFont('Inter, sans-serif'); textStyle(BOLD);
+                text(`${p.name} [${p.wins}]`, p.pos.x, p.pos.y + p.diameter/2*p.scale + 5);
+            });
+
+            // Draw Visual Effects (Particles)
+            visualEffects_2D.forEach(eff => {
+                fill(eff.color); noStroke();
+                ellipse(eff.pos.x, eff.pos.y, eff.size, eff.size);
+            });
+
+            // Game Status Text (Top Center)
+            fill(50, 50, 70);
+            stroke(230,230,250); strokeWeight(2);
+            textAlign(CENTER, TOP); textSize(24);
+            textFont('Inter, sans-serif'); textStyle(BOLD);
+            text(gameStatusMsg_2D, width / 2, 15);
+
+            if (matchResultMsg_2D) {
+                push();
+                fill(255,223,0, 220 + sin(frameCount*0.1)*35);
+                textSize(map(sin(frameCount*0.05)*0.5+0.5, 0, 1, 42, 55, true));
+                textAlign(CENTER,CENTER); textStyle(BOLDITALIC);
+                filter(BLUR, sin(frameCount*0.05)*0.5 + 0.5);
+                text(gameStatusMsg_2D, width/2, height/2); // gameStatusMsg is updated to matchResultMsg
+                pop();
+            } else if (roundResultMsg_2D && isGameLoopActive_2D == false) { // Show round winner if game paused for it
+                 fill(255,255,150, 210); textSize(32); textAlign(CENTER,CENTER);
+                 text(gameStatusMsg_2D, width/2, height/2 - 20);
+            }
+        }
+
+        window.addEventListener('message', (event) => {
+            // Add proper origin check in production
+            const msg = event.data;
+            // console.log("GAME.HTML (2D Deluxe) received:", msg);
+            if (msg.type === 'INIT_GAME') {
+                if (!gameIsSetup_2D) startGameWithData(msg);
+                else console.warn("GAME.HTML (2D Deluxe): Re-init on already setup game.");
+            } else if (msg.type === 'CONTROLLER_INPUT') {
+                if (gameIsSetup_2D && isGameLoopActive_2D) { // Only process if game active
+                    managePlayerInput(msg.playerIndex, msg.input);
+                }
+            }
+        });
+    </script>
+</body>
+</html>
