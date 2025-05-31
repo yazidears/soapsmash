@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Soap Smash Controller</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root { /* Same CSS variables as before */
+            --ctrl-bg-main: #121212; --ctrl-bg-panel: #1E1E1E; --ctrl-text-main: #D0D0D0;
+            --ctrl-text-input-field: #E8E8E8; --ctrl-text-muted-info: #787878;
+            --ctrl-accent-action: #33AADD; --ctrl-accent-admin-action: #FF3062;
+            --font-ctrl-ui: 'Inter', sans-serif; --ctrl-radius: 6px; --ctrl-padding: 18px;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        html, body { width: 100%; height: 100%; overflow: hidden;
+                      font-family: var(--font-ctrl-ui); background-color: var(--ctrl-bg-main); color: var(--ctrl-text-main);
+                      touch-action: none; /* Prevent default touch actions like pinch-zoom */ }
+
+        .ctrl-root-container { /* Same */ display: flex; flex-direction: column; justify-content: center; align-items: center;
+                               width: 100%; height: 100%; padding: var(--ctrl-padding); text-align: center; }
+
+        #ctrl-audio-prompt-gate { /* Same */
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: var(--ctrl-bg-main); display: flex; justify-content: center; align-items: center;
+            z-index: 100; cursor: pointer; transition: opacity 0.5s ease-out, visibility 0.5s; }
+        #ctrl-audio-prompt-gate.hidden { opacity: 0; visibility: hidden; pointer-events: none;}
+        #ctrl-audio-prompt-gate p {font-size: 1.2em; color: var(--ctrl-accent-action); font-weight: 600;}
+
+        .ctrl-panel-main { /* Same */
+            display: none; flex-direction: column; align-items: center;
+            background-color: var(--ctrl-bg-panel); border-radius: var(--ctrl-radius); padding: 22px;
+            width: 100%; max-width: 300px; box-shadow: 0 3px 10px rgba(0,0,0,0.3);
+            opacity:0; transition: opacity 0.5s ease-out 0.1s; }
+        .ctrl-panel-main.active { display: flex; opacity:1; }
+
+        .panel-title-ctrl { /* Same */ font-size: 1.4em; font-weight: 600; color: var(--ctrl-text-main); margin-bottom: 18px; }
+        .form-group-ctrl { /* Same */ width:100%; }
+        .input-ctrl { /* Same */ width: 100%; padding: 11px; margin-bottom: 12px; background-color: #282830;
+                      border: 1px solid #383840; border-radius: var(--ctrl-radius); color: var(--ctrl-text-input-field);
+                      font-size: 0.95em; font-family: var(--font-ctrl-ui); }
+        .input-ctrl::placeholder { color: var(--ctrl-text-muted-info); }
+        .btn-ctrl { /* Same */ width: 100%; padding: 11px; font-size: 0.95em; font-weight: 600; letter-spacing: 0.5px;
+                    background-color: var(--ctrl-accent-action); color: white; border: none; border-radius: var(--ctrl-radius);
+                    text-transform: uppercase; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: all 0.2s ease-out; cursor: pointer; }
+        .btn-ctrl:hover { filter: brightness(1.12); }
+        .btn-ctrl:disabled { background-color: var(--ctrl-text-muted-info); color: #505050; cursor: default; }
+        .btn-ctrl.admin { background-color: var(--ctrl-accent-admin-action); margin-top: 10px; }
+        .message-ctrl { /* Same */ margin-top: 12px; color: var(--ctrl-text-muted-info); font-size: 0.8em; min-height: 1.3em; }
+        .fullscreen-prompt-container-ctrl { /* Same */ margin-top:12px; text-align:center;}
+        .fullscreen-prompt-container-ctrl button {font-size:0.8em; padding:7px 10px; background: var(--ctrl-accent-action); color:white; border:none; border-radius:4px; cursor:pointer;}
+
+        /* NEW: Gamepad UI */
+        #gamepad-ui-container {
+            display: none; /* Hidden initially */
+            flex-direction: row; /* Joystick on left, buttons on right */
+            justify-content: space-around;
+            align-items: center;
+            width: 100%;
+            height: 100%; /* Take full screen */
+            padding: 20px;
+            position: fixed; /* Cover everything */
+            top: 0; left: 0;
+            background-color: rgba(10,10,20,0.8); /* Semi-transparent overlay */
+            z-index: 50; /* Below audio prompt if active, above other controller stuff */
+        }
+        .joystick-area {
+            width: 150px; height: 150px;
+            border-radius: 50%;
+            background-color: rgba(255,255,255,0.1);
+            position: relative;
+            display: flex; justify-content: center; align-items: center;
+            border: 2px solid rgba(255,255,255,0.2);
+        }
+        #joystick-handle {
+            width: 60px; height: 60px;
+            border-radius: 50%;
+            background-color: var(--ctrl-accent-action);
+            box-shadow: 0 0 10px var(--ctrl-accent-action);
+            position: absolute; /* Will be moved by JS */
+        }
+        .buttons-area {
+            display: flex; flex-direction: column;
+            gap: 20px;
+        }
+        .gamepad-button {
+            width: 70px; height: 70px;
+            border-radius: 50%;
+            background-color: var(--ctrl-accent-action);
+            color: white;
+            font-family: var(--font-ctrl-ui); font-weight: bold; font-size: 1.2em;
+            border: none;
+            display: flex; justify-content: center; align-items: center;
+            box-shadow: 0 3px 5px rgba(0,0,0,0.3);
+            user-select: none; /* Prevent text selection on rapid taps */
+        }
+        .gamepad-button.active { /* Style when pressed */
+            transform: scale(0.95);
+            filter: brightness(0.8);
+        }
+    </style>
+</head>
+<body>
+    <div id="ctrl-audio-prompt-gate">
+        <p>TAP TO CONNECT</p>
+    </div>
+
+    <div class="ctrl-root-container">
+        <div id="ctrl-panel-main" class="ctrl-panel-main">
+            <!-- Lobby join UI remains the same -->
+            <h2 id="panel-header-text-area" class="panel-title-ctrl">JOIN GAME</h2>
+            <div id="form-group-ctrl-area" class="form-group-ctrl">
+                <input type="text" id="name-input-ctrl-field" class="input-ctrl" placeholder="Your Name (Optional)">
+                <button id="join-btn-action-ctrl" class="btn-ctrl">CONNECT</button>
+            </div>
+            <p id="message-ctrl-display-area" class="message-ctrl"></p>
+            <div id="admin-ctrl-options-area" style="display:none; width:100%;">
+                <button id="start-btn-admin-action-ctrl" class="btn-ctrl admin">START GAME</button>
+            </div>
+            <div id="fullscreen-prompt-div-area-ctrl" class="fullscreen-prompt-container-ctrl" style="display:none;">
+                <button id="fullscreen-btn-action-ctrl">ENABLE FULLSCREEN</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- NEW: Gamepad UI, initially hidden -->
+    <div id="gamepad-ui-container">
+        <div id="joystick-zone" class="joystick-area">
+            <div id="joystick-handle"></div>
+        </div>
+        <div class="buttons-area">
+            <button id="button-dash" class="gamepad-button">DASH</button>
+            <!-- Add more buttons if needed -->
+        </div>
+    </div>
+
+    <audio id="sfx_click_for_controller" src="/static/audio/click.wav" preload="auto"></audio>
+
+    <script>
+        // JS variables (socketCtrl, audioUnlockedCtrl, etc.) same as before
+        const socketCtrl = io();
+        let audioUnlockedCtrl = false;
+        let playerIdxCtrl = -1;
+        const clickSoundCtrlEl = document.getElementById('sfx_click_for_controller');
+        const audioGateCtrlEl = document.getElementById('ctrl-audio-prompt-gate');
+        const mainPanelCtrlEl = document.getElementById('ctrl-panel-main');
+
+        // NEW: Gamepad UI elements
+        const gamepadUiContainer = document.getElementById('gamepad-ui-container');
+        const joystickZone = document.getElementById('joystick-zone');
+        const joystickHandle = document.getElementById('joystick-handle');
+        const dashButton = document.getElementById('button-dash');
+
+        let joystickActive = false;
+        let joystickStartX = 0, joystickStartY = 0;
+        let joystickCurrentX = 0, joystickCurrentY = 0;
+        const joystickRadius = joystickZone.offsetWidth / 2 - joystickHandle.offsetWidth / 2; // Max distance for handle
+
+
+        function playCtrlClickSfx() { /* Same as before */
+            if (!audioUnlockedCtrl || !clickSoundCtrlEl) return;
+            clickSoundCtrlEl.currentTime = 0; clickSoundCtrlEl.volume = 0.4;
+            clickSoundCtrlEl.play().catch(err => console.warn("Ctrl click SFX issue:", err)); }
+
+        audioGateCtrlEl.addEventListener('click', () => { /* Same as before */
+            if (audioUnlockedCtrl) return; audioUnlockedCtrl = true;
+            console.log("Controller audio prompt passed.");
+            audioGateCtrlEl.classList.add('hidden'); mainPanelCtrlEl.classList.add('active');
+        }, { once: true });
+
+        const joinButtonElement = document.getElementById('join-btn-action-ctrl'); /* Same as before */
+        const nameInputElement = document.getElementById('name-input-ctrl-field'); /* Same as before */
+        joinButtonElement.addEventListener('click', () => { /* Same as before */
+            if (!audioUnlockedCtrl) return; playCtrlClickSfx();
+            joinButtonElement.disabled = true; joinButtonElement.textContent = 'LINKING...';
+            socketCtrl.emit('controller_request_join_slot_event', { playerName: nameInputElement.value }); });
+
+        const fullscreenPromptContainer = document.getElementById('fullscreen-prompt-div-area-ctrl'); /* Same as before */
+        const fullscreenButtonActual = document.getElementById('fullscreen-btn-action-ctrl'); /* Same as before */
+        fullscreenButtonActual.addEventListener('click', () => { /* Same as before */
+            playCtrlClickSfx(); const docEl = document.documentElement;
+            if (docEl.requestFullscreen) docEl.requestFullscreen(); else if (docEl.mozRequestFullScreen) docEl.mozRequestFullScreen();
+            else if (docEl.webkitRequestFullscreen) docEl.webkitRequestFullscreen(); else if (docEl.msRequestFullscreen) docEl.msRequestFullscreen();
+            fullscreenPromptContainer.style.display = 'none'; });
+
+        socketCtrl.on('controller_join_slot_ack_event', (ack) => { /* Same as before */
+            const joinBtn = document.getElementById('join-btn-action-ctrl');
+            const msgArea = document.getElementById('message-ctrl-display-area');
+            const title = document.getElementById('panel-header-text-area');
+            const form = document.getElementById('form-group-ctrl-area');
+            const adminOpts = document.getElementById('admin-ctrl-options-area');
+            if (ack.success) { playerIdxCtrl = ack.playerIndex; title.textContent = `${ack.playerName}`;
+                form.style.display = 'none'; fullscreenPromptContainer.style.display = 'block';
+                if (ack.isAdmin) { msgArea.textContent = 'You are Admin. Start when ready!'; adminOpts.style.display = 'block';
+                    document.getElementById('start-btn-admin-action-ctrl').onclick = () => {
+                        playCtrlClickSfx(); socketCtrl.emit('admin_request_start_game_event'); };
+                } else { msgArea.textContent = 'Connected. Waiting for Admin...'; adminOpts.style.display = 'none'; }
+            } else { joinBtn.disabled = false; joinBtn.textContent = 'RETRY'; msgArea.textContent = `Error: ${ack.message}`; } });
+
+        socketCtrl.on('controller_lobby_message_event', (infoMsg) => {  /* Same as before */
+             if (infoMsg.isError) { const msgArea = document.getElementById('message-ctrl-display-area');
+                msgArea.textContent = infoMsg.message; } });
+
+        // MODIFIED: Game Start - Switch to Gamepad UI
+        socketCtrl.on('game_start_transition_event', () => { // Changed event name from server
+            console.log("Controller received game start signal. Switching to gamepad UI.");
+            mainPanelCtrlEl.style.display = 'none'; // Hide lobby join panel
+            fullscreenPromptContainer.style.display = 'none'; // Hide fullscreen prompt if still visible
+            gamepadUiContainer.style.display = 'flex'; // Show gamepad UI
+
+            // Initialize joystick position (optional, if you want it centered initially)
+            joystickHandle.style.transform = `translate(0px, 0px)`;
+
+            // Start sending controller data periodically
+            setInterval(sendControllerData, 50); // e.g., 20 times per second
+        });
+
+        // NEW: Joystick Logic
+        function getTouchPos(e) {
+            return e.touches && e.touches.length ? e.touches[0] : e;
+        }
+
+        joystickZone.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            joystickActive = true;
+            const touch = getTouchPos(e);
+            const rect = joystickZone.getBoundingClientRect();
+            joystickStartX = rect.left + rect.width / 2; // Center of the zone
+            joystickStartY = rect.top + rect.height / 2;
+            joystickHandle.style.transition = 'none'; // Allow immediate movement
+        }, { passive: false });
+
+        joystickZone.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (!joystickActive) return;
+            const touch = getTouchPos(e);
+            let dx = touch.clientX - joystickStartX;
+            let dy = touch.clientY - joystickStartY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance > joystickRadius) {
+                dx = (dx / distance) * joystickRadius;
+                dy = (dy / distance) * joystickRadius;
+            }
+            joystickHandle.style.transform = `translate(${dx}px, ${dy}px)`;
+            joystickCurrentX = dx / joystickRadius; // Normalized: -1 to 1
+            joystickCurrentY = dy / joystickRadius; // Normalized: -1 to 1
+        }, { passive: false });
+
+        joystickZone.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            if (!joystickActive) return;
+            joystickActive = false;
+            joystickHandle.style.transition = 'transform 0.1s ease-out'; // Smooth return to center
+            joystickHandle.style.transform = `translate(0px, 0px)`;
+            joystickCurrentX = 0;
+            joystickCurrentY = 0;
+        });
+
+        // NEW: Button Logic
+        let dashButtonPressed = false;
+        dashButton.addEventListener('touchstart', (e) => {
+            e.preventDefault(); dashButtonPressed = true; dashButton.classList.add('active'); playCtrlClickSfx();
+        });
+        dashButton.addEventListener('touchend', (e) => {
+            e.preventDefault(); dashButtonPressed = false; dashButton.classList.remove('active');
+        });
+        // Add mousedown/mouseup for desktop testing if needed
+        dashButton.addEventListener('mousedown', () => { dashButtonPressed = true; dashButton.classList.add('active'); playCtrlClickSfx(); });
+        dashButton.addEventListener('mouseup', () => { dashButtonPressed = false; dashButton.classList.remove('active'); });
+
+
+        // NEW: Send controller data
+        function sendControllerData() {
+            if (gamepadUiContainer.style.display !== 'flex') return; // Only send if gamepad is active
+
+            const inputPayload = {
+                dx: joystickCurrentX, // Normalized joystick X (-1 to 1)
+                dy: joystickCurrentY, // Normalized joystick Y (-1 to 1)
+                dash: dashButtonPressed
+            };
+            socketCtrl.emit('controller_input_to_server_event', { input: inputPayload });
+        }
+
+        // NEW: Handle server telling controller to return to lobby (e.g., after game over)
+        socketCtrl.on('controller_return_to_lobby_event', () => {
+            console.log("Controller received return to lobby signal.");
+            gamepadUiContainer.style.display = 'none'; // Hide gamepad
+            mainPanelCtrlEl.style.display = 'flex';    // Show lobby join panel again
+
+            // Reset UI elements to initial state
+            const msgArea = document.getElementById('message-ctrl-display-area');
+            const title = document.getElementById('panel-header-text-area');
+            const form = document.getElementById('form-group-ctrl-area');
+            const adminOpts = document.getElementById('admin-ctrl-options-area');
+            const joinBtn = document.getElementById('join-btn-action-ctrl');
+
+            title.textContent = "JOIN GAME";
+            form.style.display = 'block'; // Show name input and join button
+            joinBtn.disabled = false;
+            joinBtn.textContent = 'CONNECT';
+            nameInputElement.value = ''; // Clear name input
+            msgArea.textContent = ''; // Clear status message
+            adminOpts.style.display = 'none'; // Hide admin controls
+            fullscreenPromptContainer.style.display = 'none'; // Hide fullscreen prompt
+
+            // Stop sending controller data
+            // No explicit stop for setInterval needed if we only send when gamepad is visible,
+            // but if you had a dedicated interval timer, you'd clearInterval(timerId) here.
+        });
+
+
+        socketCtrl.on('connect', () => console.log('Ctrl socket connected:', socketCtrl.id)); /* Same */
+        socketCtrl.on('disconnect', () => { /* Same */
+            const msgAreaEl = document.getElementById('message-ctrl-display-area');
+            if(msgAreaEl && gamepadUiContainer.style.display !== 'flex') msgAreaEl.textContent = "Connection lost. Refresh if needed.";
+            else if (gamepadUiContainer.style.display === 'flex') { /* If in game, less obtrusive message or handle differently */ }
+        });
+        socketCtrl.on('connect_error', (err) => { /* Same */
+            console.error('Ctrl socket error:', err);
+            const msgAreaEl = document.getElementById('message-ctrl-display-area');
+            if(msgAreaEl && gamepadUiContainer.style.display !== 'flex') msgAreaEl.textContent = "Connection problem.";
+        });
+    </script>
+</body>
+</html>
