@@ -7,7 +7,7 @@ app.config['SECRET_KEY'] = 'zoom_void_and_game_secret_v8'  # Updated key
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 MAX_PLAYERS = 4
-MIN_PLAYERS_TO_START = 2
+MIN_PLAYERS_TO_START = 1
 
 players_data = {}
 screen_sids = set()
