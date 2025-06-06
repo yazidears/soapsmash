@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Soap Smash</title>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Titillium+Web:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-deep-space: #0C0C1E;
+            --bg-nebula-panel: rgba(20, 20, 40, 0.85);
+            --accent-laser-blue: #00DFFF;
+            --accent-star-purple: #AB47BC; /* Softer purple */
+            --accent-alert-red: #FF3D71;
+            --text-primary-light: #E0E7FF;
+            --text-secondary-muted: #8A95B5;
+            --font-ui: 'Titillium Web', sans-serif;
+            --font-brand: 'Orbitron', sans-serif; /* Sci-fi, digital feel */
+            --shadow-ambient: 0 8px 25px rgba(0, 0, 0, 0.5);
+            --glow-blue: 0 0 12px rgba(0, 223, 255, 0.4);
+            --glow-purple: 0 0 12px rgba(171, 71, 188, 0.3);
+            --glow-red: 0 0 12px rgba(255, 61, 113, 0.4);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        html, body { width: 100%; height: 100%; overflow: hidden;
+                      font-family: var(--font-ui); background-color: var(--bg-deep-space); color: var(--text-primary-light);
+                      -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+        .centered-container { display: flex; flex-direction: column; justify-content: center; align-items: center;
+                              width: 100%; height: 100%; position: relative; padding: 15px; }
+
+        /* Initial Tap to Start Screen */
+        #tap-to-start-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: var(--bg-deep-space); /* Or a gradient */
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            z-index: 1000; cursor: pointer; text-align: center;
+            transition: opacity 0.7s ease-out, visibility 0.7s;
+        }
+        #tap-to-start-overlay.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+        .start-title { font-family: var(--font-brand); font-size: clamp(2.8em, 8vw, 5em);
+                       color: var(--accent-laser-blue); letter-spacing: 1px;
+                       text-shadow: 0 0 10px var(--accent-laser-blue), 0 0 20px var(--accent-star-purple);
+                       margin-bottom: 15px; animation: pulseGlow 2.5s infinite alternate; }
+        @keyframes pulseGlow {
+            from { text-shadow: 0 0 8px var(--accent-laser-blue), 0 0 15px var(--accent-star-purple); }
+            to { text-shadow: 0 0 15px var(--accent-laser-blue), 0 0 30px var(--accent-star-purple), 0 0 5px #fff; }
+        }
+        .start-prompt { font-size: clamp(1em, 3vw, 1.3em); color: var(--text-secondary-muted);
+                        animation: fadeInCrawl 1.5s ease-out 0.5s backwards; }
+        @keyframes fadeInCrawl { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* Main Lobby Title (after tap to start) */
+        .main-lobby-title {
+            font-family: var(--font-brand); font-size: clamp(1.8em, 5vw, 3em);
+            color: var(--text-primary-light); margin-bottom: 25px; text-align: center;
+            user-select: none; position: relative; padding: 10px 0;
+            animation: slideInTitle 1s ease-out;
+        }
+        .main-lobby-title span { display: inline-block; } /* For individual letter/word animation if needed */
+        .main-lobby-title .soap-icon-title {
+            font-size: 0.8em; color: var(--accent-laser-blue); margin: 0 8px;
+            filter: drop-shadow(0 0 6px var(--accent-laser-blue));
+            animation: floatIcon 3s ease-in-out infinite alternate;
+        }
+        @keyframes floatIcon { from { transform: translateY(-3px); } to { transform: translateY(3px); } }
+        @keyframes slideInTitle { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+
+
+        /* Screen Content */
+        .screen-content-area { display: none; flex-direction: column; align-items: center; width: 100%;
+                               opacity: 0; transition: opacity 0.5s ease-out; }
+        body.screen-mode .screen-content-area.visible { display: flex; opacity: 1; }
+
+        .qr-display-area { background-color: var(--bg-nebula-panel); padding: 25px; border-radius: 12px;
+                           box-shadow: var(--shadow-ambient), var(--glow-blue); text-align: center; margin-bottom:20px; }
+        #qr-code-target-div { background-color: white; padding: 10px; border-radius: 8px; display: inline-block;
+                            box-shadow: 0 0 8px white; }
+        #qr-code-target-div img { display: block; width: 140px; height: 140px; }
+        .qr-display-area p { margin-top: 12px; color: var(--text-secondary-muted); font-size: 0.85em; }
+
+        .player-slots-grid-area { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                                  gap: 18px; width: 100%; max-width: 1000px; }
+        .player-slot-card-ui {
+            background-color: var(--bg-nebula-panel); border: 1px solid rgba(0, 223, 255, 0.15);
+            border-radius: 10px; padding: 20px 15px;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            text-align: center; min-height: 150px;
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); user-select: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3); opacity:0.7;
+        }
+        .player-slot-card-ui.occupied {
+            border-color: var(--accent-laser-blue);
+            box-shadow: var(--shadow-ambient), var(--glow-blue); opacity:1; transform: translateY(-3px);
+        }
+        .player-slot-card-ui.admin-player { border-color: var(--accent-alert-red); box-shadow: var(--shadow-ambient), var(--glow-red); }
+
+        .player-avatar-ui { width: 45px; height: 45px; border-radius: 50%; background-color: #30334D;
+                            display: flex; justify-content: center; align-items: center; margin-bottom: 10px;
+                            font-size: 1.5em; font-weight: 700; color: var(--text-secondary-muted); transition: all 0.3s ease; }
+        .player-slot-card-ui.occupied .player-avatar-ui { background-color: var(--accent-laser-blue); color: var(--bg-deep-space); transform: scale(1.05); }
+        .player-slot-card-ui.admin-player .player-avatar-ui { background-color: var(--accent-alert-red); }
+        .player-name-ui { font-size: 1.1em; font-weight: 600; margin-bottom: 4px; color: var(--text-primary-light); }
+        .player-status-ui { font-size: 0.8em; color: var(--text-secondary-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+        .player-slot-card-ui.occupied .player-status-ui { color: var(--accent-laser-blue); }
+        .player-slot-card-ui.admin-player .player-status-ui { color: var(--accent-alert-red); }
+
+        .lobby-status-bar { margin-top: 20px; color: var(--text-secondary-muted); font-size: 0.9em; text-align: center; min-height:1.5em; }
+
+        /* Controller Content */
+        .controller-content-area { display: none; flex-direction: column; align-items: center; justify-content:center;
+                                   width:100%; height:100%; opacity:0; transition: opacity 0.5s ease-out; }
+        body.controller-mode .controller-content-area.visible { display: flex; opacity: 1; }
+
+        .controller-ui-panel { background-color: var(--bg-nebula-panel); border-radius: 12px; padding: 25px;
+                               width: 100%; max-width: 340px; text-align: center; box-shadow: var(--shadow-ambient); }
+        .controller-ui-panel h2 { font-family: var(--font-brand); font-size: 1.8em; color: var(--text-primary-light); margin-bottom: 20px; }
+        .controller-ui-panel input { width: 100%; padding: 12px; margin-bottom: 15px; background-color: rgba(0,0,0,0.2);
+                                     border: 1px solid var(--accent-laser-blue); border-radius: 8px; color: var(--text-primary-light);
+                                     font-size: 1em; font-family: var(--font-ui); }
+        .controller-ui-panel input::placeholder { color: var(--text-secondary-muted); }
+        .action-button { width: 100%; padding: 14px; font-size: 1.05em; font-weight: 700; letter-spacing: 0.5px;
+                         background: linear-gradient(45deg, var(--accent-laser-blue), var(--accent-star-purple));
+                         color: white; border: none; border-radius: 8px; text-transform: uppercase;
+                         box-shadow: 0 3px 8px rgba(0,0,0,0.3); transition: all 0.2s ease-out; cursor: pointer; }
+        .action-button:hover { filter: brightness(1.1); transform: translateY(-2px); }
+        .action-button:active { transform: translateY(0px); filter: brightness(0.9); }
+        .action-button:disabled { background: var(--text-secondary-muted); cursor: default; transform: none; filter: none; }
+        .admin-action-button { background: linear-gradient(45deg, var(--accent-alert-red), #FF6B8B ); margin-top: 12px; }
+        .controller-status-message { margin-top: 18px; color: var(--text-secondary-muted); font-size: 0.85em; min-height: 1.5em; }
+
+        .fullscreen-request-panel { margin-top:18px; padding:12px; background:rgba(0,0,0,0.2); border-radius:8px; text-align:center;}
+        .fullscreen-request-panel button {font-size:0.85em; padding:8px 12px; background: var(--accent-laser-blue); color:white; border:none; border-radius:5px; cursor:pointer;}
+    </style>
+</head>
+<body class="{{ mode }}-mode">
+
+    <div id="tap-to-start-overlay">
+        <div class="start-title">SOAP SMASH</div>
+        <p class="start-prompt">TAP ANYWHERE TO BEGIN</p>
+    </div>
+
+    <div class="centered-container">
+        <h1 class="main-lobby-title" style="display:none;"><span class="soap-icon-title">🧼</span> <span>LOBBY</span> <span class="soap-icon-title">🎮</span></h1>
+
+        <div class="screen-content-area">
+            <div class="qr-display-area">
+                <div id="qr-code-target-div"></div>
+                <p>Scan with phone to control!</p>
+            </div>
+            <div id="player-slots-grid-area-div" class="player-slots-grid-area"></div>
+            <p id="lobby-status-bar-div" class="lobby-status-bar">Initializing lobby...</p>
+        </div>
+
+        <div class="controller-content-area">
+            <div class="controller-ui-panel">
+                <h2 id="controller-view-title">CONNECT</h2>
+                <div id="controller-input-form">
+                    <input type="text" id="ctrl-player-name-in" placeholder="Your Name (Optional)">
+                    <button id="ctrl-connect-btn" class="action-button">JOIN GAME</button>
+                </div>
+                <p id="ctrl-status-msg-area" class="controller-status-message"></p>
+                <div id="ctrl-admin-panel" style="display:none; width:100%;">
+                    <button id="ctrl-start-game-action-btn" class="action-button admin-action-button">START GAME</button>
+                </div>
+                 <div id="ctrl-fullscreen-prompt" class="fullscreen-request-panel" style="display:none;">
+                    <p>Enable Fullscreen?</p>
+                    <button id="ctrl-fullscreen-action-btn">ACTIVATE</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <audio id="sfx_click_el" src="/static/audio/click.wav" preload="auto"></audio>
+    <audio id="sfx_connected_el" src="/static/audio/connected.wav" preload="auto"></audio>
+    <audio id="sfx_gamestart_el" src="/static/audio/gamestart.wav" preload="auto"></audio>
+    <audio id="sfx_error_el" src="/static/audio/wah.wav" preload="auto"></audio>
+    <audio id="sfx_background_el" src="/static/audio/background.wav" loop preload="auto"></audio>
+
+    <script>
+        const APP_LAUNCH_MODE = document.body.classList.contains('screen-mode') ? 'screen' : 'controller';
+        const SERVER_QR_JOIN_URL = "{{ join_url if mode == 'screen' else '' }}";
+        const mainSocket = io();
+        let pageInteracted = false;
+        let thisPlayerLocalIndex = -1;
+
+        const soundEffectElements = {
+            click: document.getElementById('sfx_click_el'),
+            connected: document.getElementById('sfx_connected_el'),
+            gamestart: document.getElementById('sfx_gamestart_el'),
+            error: document.getElementById('sfx_error_el'),
+            background: document.getElementById('sfx_background_el')
+        };
+
+        const tapToStartScreen = document.getElementById('tap-to-start-overlay');
+        const mainLobbyTitleEl = document.querySelector('.main-lobby-title');
+        const screenContentEl = document.querySelector('.screen-content-area');
+        const controllerContentEl = document.querySelector('.controller-content-area');
+
+        function playSoundEffect(audioEl, volume = 1.9) {
+            if (!pageInteracted || !audioEl) return;
+            audioEl.currentTime = 0;
+            audioEl.volume = volume;
+            audioEl.play().catch(err => console.warn("SFX play error:", err));
+        }
+
+        tapToStartScreen.addEventListener('click', () => {
+            if (pageInteracted) return;
+            pageInteracted = true;
+            console.log("Initial interaction: Audio unlocked.");
+            tapToStartScreen.classList.add('hidden');
+            mainLobbyTitleEl.style.display = 'block';
+
+            if (APP_LAUNCH_MODE === 'screen') {
+                screenContentEl.classList.add('visible');
+                if (soundEffectElements.background) playSoundEffect(soundEffectElements.background, 0.15);
+            } else {
+                controllerContentEl.classList.add('visible');
+            }
+        }, { once: true });
+
+
+        if (APP_LAUNCH_MODE === 'screen') {
+            const qrTargetDiv = document.getElementById('qr-code-target-div');
+            if (SERVER_QR_JOIN_URL && qrTargetDiv) {
+                const qrGenerator = qrcode(0, 'M');
+                qrGenerator.addData(SERVER_QR_JOIN_URL);
+                qrGenerator.make();
+                qrTargetDiv.innerHTML = qrGenerator.createImgTag(4, 8);
+            }
+            mainSocket.emit('screen_ready_event');
+        } else {
+            const connectBtn = document.getElementById('ctrl-connect-btn');
+            const playerNameIn = document.getElementById('ctrl-player-name-in');
+            connectBtn.addEventListener('click', () => {
+                if(!pageInteracted) return; // Should not happen if tap-to-start is used
+                playSoundEffect(soundEffectElements.click, 0.7);
+                connectBtn.disabled = true;
+                connectBtn.textContent = 'CONNECTING...';
+                mainSocket.emit('request_join_event', { playerName: playerNameIn.value });
+            });
+
+            const fullscreenPromptDiv = document.getElementById('ctrl-fullscreen-prompt');
+            const fullscreenActionBtn = document.getElementById('ctrl-fullscreen-action-btn');
+            fullscreenActionBtn.addEventListener('click', () => {
+                const elem = document.documentElement;
+                if (elem.requestFullscreen) elem.requestFullscreen();
+                else if (elem.mozRequestFullScreen) elem.mozRequestFullScreen();
+                else if (elem.webkitRequestFullscreen) elem.webkitRequestFullscreen();
+                else if (elem.msRequestFullscreen) elem.msRequestFullscreen();
+                fullscreenPromptDiv.style.display = 'none';
+            });
+        }
+
+        mainSocket.on('update_player_list_event', (updatePayload) => {
+            console.log('Player list event:', updatePayload.players);
+            if (APP_LAUNCH_MODE === 'screen') {
+                const slotsGridArea = document.getElementById('player-slots-grid-area-div');
+                const statusBar = document.getElementById('lobby-status-bar-div');
+                if (!slotsGridArea) return;
+                slotsGridArea.innerHTML = '';
+                let numConnected = 0;
+                updatePayload.players.forEach(playerData => {
+                    const cardDiv = document.createElement('div');
+                    cardDiv.className = 'player-slot-card-ui';
+                    if (playerData.connected) {
+                        cardDiv.classList.add('occupied');
+                        numConnected++;
+                    }
+                    if (playerData.isAdmin) cardDiv.classList.add('admin-player');
+
+                    cardDiv.innerHTML = `
+                        <div class="player-avatar-ui">${playerData.connected ? playerData.name.charAt(0).toUpperCase() : '?'}</div>
+                        <div class="player-name-ui">${playerData.name}</div>
+                        <div class="player-status-ui">${playerData.isAdmin ? 'Admin' : (playerData.connected ? 'Joined' : 'Open')}</div>
+                    `;
+                    slotsGridArea.appendChild(cardDiv);
+                });
+                statusBar.textContent = `${numConnected} / ${updatePayload.players.length} Players. ${numConnected >= 2 ? 'Admin can initiate game sequence!' : 'Awaiting more players...'}`;
+            } else {
+                const thisPlayer = updatePayload.players.find(p => p.sid === mainSocket.id);
+                const adminControlsArea = document.getElementById('ctrl-admin-panel');
+                const statusMsgArea = document.getElementById('ctrl-status-msg-area');
+                if (thisPlayer && thisPlayer.connected && thisPlayer.isAdmin) {
+                    adminControlsArea.style.display = 'block';
+                    statusMsgArea.textContent = 'You are the Game Admin.';
+                     document.getElementById('ctrl-start-game-action-btn').onclick = () => {
+                        playSoundEffect(soundEffectElements.click, 0.7);
+                        mainSocket.emit('request_start_game_event');
+                    };
+                } else if (thisPlayer && thisPlayer.connected) {
+                    adminControlsArea.style.display = 'none';
+                }
+            }
+        });
+
+        mainSocket.on('join_ack_event', (ackPayload) => {
+            if (APP_LAUNCH_MODE === 'controller') {
+                const connectBtn = document.getElementById('ctrl-connect-btn');
+                const statusMsgArea = document.getElementById('ctrl-status-msg-area');
+                const titleArea = document.getElementById('controller-view-title');
+                const inputFormArea = document.getElementById('controller-input-form');
+                const adminControlsArea = document.getElementById('ctrl-admin-panel');
+                const fullscreenPromptDiv = document.getElementById('ctrl-fullscreen-prompt');
+
+                if (ackPayload.success) {
+                    thisPlayerLocalIndex = ackPayload.playerIndex;
+                    titleArea.textContent = `${ackPayload.playerName}`;
+                    inputFormArea.style.display = 'none';
+
+                    fullscreenPromptDiv.style.display = 'block';
+
+                    if (ackPayload.isAdmin) {
+                        statusMsgArea.textContent = 'You are Admin! Start when ready.';
+                        adminControlsArea.style.display = 'block';
+                        document.getElementById('ctrl-start-game-action-btn').onclick = () => {
+                            playSoundEffect(soundEffectElements.click, 0.7);
+                            mainSocket.emit('request_start_game_event');
+                        };
+                    } else {
+                        statusMsgArea.textContent = 'Connected! Waiting for Admin...';
+                        adminControlsArea.style.display = 'none';
+                    }
+                } else {
+                    playSoundEffect(soundEffectElements.error);
+                    connectBtn.disabled = false;
+                    connectBtn.textContent = 'RETRY';
+                    statusMsgArea.textContent = `Error: ${ackPayload.message}`;
+                }
+            }
+        });
+
+        mainSocket.on('screen_play_sound_event', (soundEventData) => {
+            if (APP_LAUNCH_MODE === 'screen' && soundEffectElements[soundEventData.sound]) {
+                let soundVol = (soundEventData.sound === 'connected' || soundEventData.sound === 'error') ? 0.5 : 0.7;
+                if(soundEventData.sound === 'background') soundVol = 40; // Restore desired BG volume
+                playSoundEffect(soundEffectElements[soundEventData.sound], soundVol);
+            }
+        });
+
+        mainSocket.on('lobby_message_event', (lobbyMsgData) => {
+            const targetElId = APP_LAUNCH_MODE === 'screen' ? 'lobby-status-bar-div' : 'ctrl-status-msg-area';
+            const msgEl = document.getElementById(targetElId);
+            if (msgEl) {
+                msgEl.textContent = lobbyMsgData.message;
+                msgEl.style.color = lobbyMsgData.isError ? 'var(--accent-alert-red)' : 'var(--text-secondary-muted)';
+            }
+        });
+
+        mainSocket.on('game_starting_event', () => {
+            if (soundEffectElements.background) soundEffectElements.background.pause();
+            // Explicitly play game start sound here if not relying on screen_play_sound_event for it
+            playSoundEffect(soundEffectElements.gamestart, 0.8);
+            document.body.innerHTML = `<div class="centered-container"><div style="text-align:center; padding:30px 40px; background: var(--bg-nebula-panel); border-radius:12px; box-shadow: var(--glow-blue);">
+                                       <h1 style="font-family: var(--font-brand); font-size: 2.5em; color: var(--accent-laser-blue);">GAME ON!</h1>
+                                       <p style="font-size:1.1em; margin-top:12px; color: var(--text-primary-light);">Prepare for Battle!</p></div></div>`;
+        });
+
+        mainSocket.on('connect', () => {
+            console.log('Socket connected:', mainSocket.id);
+            if (APP_LAUNCH_MODE === 'screen' && pageInteracted) { // Only if screen already passed tap-to-start
+                 mainSocket.emit('screen_ready_event');
+            }
+        });
+        mainSocket.on('disconnect', () => {
+            console.log('Socket disconnected.');
+            const msgArea = document.getElementById(APP_LAUNCH_MODE === 'screen' ? 'lobby-status-bar-div' : 'ctrl-status-msg-area');
+            if(msgArea) msgArea.textContent = "Connection lost. Attempting to reconnect...";
+        });
+        mainSocket.on('connect_error', (err) => {
+            console.error('Socket connection error:', err);
+            const msgArea = document.getElementById(APP_LAUNCH_MODE === 'screen' ? 'lobby-status-bar-div' : 'ctrl-status-msg-area');
+            if(msgArea) msgArea.textContent = "Error connecting to server.";
+        });
+    </script>
+</body>
+</html>
