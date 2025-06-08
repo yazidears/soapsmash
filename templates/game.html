@@ -374,8 +374,8 @@
                     stroke(ef.color); strokeWeight(map(ef.life, 0, ef.type === 'line' ? 10 : 15, 0.5, 1.5)); // Make lines thinner as they fade
                     line(ef.p1.x, ef.p1.y, ef.p2.x, ef.p2.y);
                 } else if (ef.type === 'spark' || ef.type === 'swirl') {
-                    let alpha = map(ef.life, 0, (ef.type === 'swirl'?30:15), 0, alpha(ef.color)); // Fade alpha using existing color transparency
-                    fill(red(ef.color), green(ef.color), blue(ef.color), alpha);
+                    let alphaVal = map(ef.life, 0, (ef.type === 'swirl'?30:15), 0, alpha(ef.color)); // Fade alpha using existing color transparency
+                    fill(red(ef.color), green(ef.color), blue(ef.color), alphaVal);
                     noStroke();
                     ellipse(ef.pos.x, ef.pos.y, ef.radius * (ef.life / (ef.type === 'swirl'?30:15)) );
                 }
