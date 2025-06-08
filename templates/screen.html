@@ -191,6 +191,9 @@
         screenWs.on('update_player_list_data_event', (data) => { /* Same as before, BUT store player data */
             console.log('Screen: Player list update:', data.players);
             connectedPlayersForGame = data.players.filter(p => p.connected); // Store for game init
+            if (gameWindow) {
+                gameWindow.postMessage({ type: 'PLAYER_LIST_UPDATE', players: data.players }, '*');
+            }
 
             const gridEl = document.getElementById('player-slots-container-area');
             const statusBarEl = document.getElementById('lobby-status-bar-display-area');
