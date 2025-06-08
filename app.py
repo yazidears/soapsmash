@@ -112,6 +112,8 @@ def on_socket_disconnection():  # Renamed from _v7 for clarity
             assign_admin_if_none_exists()
         print(f"Player {disconnected_player['name']} left.")
         socketio.emit('update_player_list_data_event', {'players': get_player_list_for_update()})
+        if not players_data:
+            broadcast_to_all_screens('show_lobby_view_event')
 
 
 @socketio.on('controller_request_join_slot_event')

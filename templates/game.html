@@ -23,9 +23,9 @@
         const CHARGE_RATE_C = 2.5;
         const DASH_BASE_VELOCITY_C = 8;
         const FRICTION_C = 0.98;
-        const BUMP_TRANSFER_C = 0.7;
+        const BUMP_TRANSFER_C = 0.8; // slightly more bouncy collisions
         const BUMP_FIXED_KNOCKBACK_C = 2;
-        const DRAIN_RADIUS_C = 35;
+        const DRAIN_RADIUS_C = 60; // bigger drain
         const ROUNDS_TO_WIN_C = 2;
         const ARENA_PADDING_C = PLAYER_RADIUS_C * 2;
 
@@ -220,39 +220,49 @@
         }
 
         function resolveCoreCollisions(pA, pB){
-            let difference = p5.Vector.sub(pB.pos, pA.pos);
-            let dSq = difference.magSq();
+            let diff = p5.Vector.sub(pB.pos, pA.pos);
+            let distSq = diff.magSq();
             let sumR = pA.radius + pB.radius;
 
-            if (dSq < sumR * sumR && dSq > 0.001) { // Added dSq > 0.001 to avoid issues with exact overlap
-                let distVal = sqrt(dSq);
-                let normal = difference.copy().div(distVal); // Ensure normalization
-                let overlap = sumR - distVal;
+            if (distSq >= sumR * sumR || distSq < 0.0001) return;
 
-                pA.pos.sub(normal.copy().mult(overlap / 2 + 0.05));
-                pB.pos.add(normal.copy().mult(overlap / 2 + 0.05));
+            let dist = sqrt(distSq);
+            let normal = diff.copy().div(dist);
+            let penetration = sumR - dist;
 
-                let rv = p5.Vector.sub(pB.vel, pA.vel);
-                let velAlongNormal = rv.dot(normal);
+            // Separate the soaps
+            pA.pos.sub(normal.copy().mult(penetration / 2));
+            pB.pos.add(normal.copy().mult(penetration / 2));
 
-                if(velAlongNormal > 0) return;
+            let relVel = p5.Vector.sub(pB.vel, pA.vel);
+            let velAlongNormal = relVel.dot(normal);
+            if (velAlongNormal > 0) return;
 
-                let j = -(1 + BUMP_TRANSFER_C) * velAlongNormal;
-                j /= 2;
+            let j = -(1 + BUMP_TRANSFER_C) * velAlongNormal / 2; // equal mass
+            let impulse = normal.copy().mult(j);
+            pA.vel.sub(impulse);
+            pB.vel.add(impulse);
 
-                let impulse = normal.mult(j);
-                pA.vel.sub(impulse);
-                pB.vel.add(impulse);
+            // extra knockback for feel
+            pA.vel.add(normal.copy().mult(-BUMP_FIXED_KNOCKBACK_C));
+            pB.vel.add(normal.copy().mult(BUMP_FIXED_KNOCKBACK_C));
 
-                pA.vel.add(normal.copy().mult(-BUMP_FIXED_KNOCKBACK_C)); // pA pushed away from pB
-                pB.vel.add(normal.copy().mult(BUMP_FIXED_KNOCKBACK_C));  // pB pushed away from pA
-
-                addCoreEffect('bump_sparks', pA.pos.copy().lerp(pB.pos, 0.5), normal, color(255,255,100));
-            }
+            addCoreEffect('bump_sparks', pA.pos.copy().lerp(pB.pos, 0.5), normal, color(255,255,100));
         }
 
         function checkCoreRoundEnd() {
             const active = players_c.filter(p => !p.eliminated);
+            if (active.length === 0 && matchMessage_c === "" && roundMessage_c === "") {
+                isPaused_c = true;
+                matchMessage_c = "ALL PLAYERS LEFT";
+                gameStatusText_c = matchMessage_c;
+                window.parent.postMessage({ type: 'GAME_STATE_UPDATE', payload: {
+                    type: 'match_over', winnerName: 'None', round: roundNum_c,
+                    scores: players_c.map(p=>({name: p.name, score: p.wins, id: p.id }))
+                } }, '*');
+                setTimeout(() => window.parent.postMessage({ type: 'GAME_OVER_REQUEST_LOBBY_RESET' }, '*'), 2000);
+                return;
+            }
             if (active.length <= 1 && roundMessage_c === "" && matchMessage_c === "") {
                 isPaused_c = true;
                 if (active.length === 1) {
@@ -410,6 +420,12 @@
             } else if (msg.type === 'CONTROLLER_INPUT') {
                 if (gameIsReady_c) {
                     handleCorePlayerInput(msg.playerIndex, msg.input);
+                }
+            } else if (msg.type === 'PLAYER_LIST_UPDATE') {
+                if (gameIsReady_c) {
+                    const connectedIds = msg.players.filter(p=>p.connected).map(p=>p.id);
+                    players_c.forEach(p => { if(!connectedIds.includes(p.id)) p.eliminated = true; });
+                    checkCoreRoundEnd();
                 }
             }
         });
