@@ -345,10 +345,10 @@
             }
         }
 
-        gamepadDashBtn.addEventListener('touchstart', (e) => { e.preventDefault(); isDashBtnHeld = true; gamepadDashBtn.classList.add('active'); playCtrlClickSfx(); });
+        gamepadDashBtn.addEventListener('touchstart', (e) => { e.preventDefault(); isDashBtnHeld = true; gamepadDashBtn.classList.add('active'); playCtrlClick(); });
         gamepadDashBtn.addEventListener('touchend', (e) => { e.preventDefault(); isDashBtnHeld = false; gamepadDashBtn.classList.remove('active'); });
         // Keep mouse for testing, ensure it only fires for left click
-        gamepadDashBtn.addEventListener('mousedown', (e) => { if(e.button === 0){isDashBtnHeld = true; gamepadDashBtn.classList.add('active'); playCtrlClickSfx();}});
+        gamepadDashBtn.addEventListener('mousedown', (e) => { if(e.button === 0){isDashBtnHeld = true; gamepadDashBtn.classList.add('active'); playCtrlClick();}});
         gamepadDashBtn.addEventListener('mouseup', (e) => { if(e.button === 0){isDashBtnHeld = false; gamepadDashBtn.classList.remove('active');}});
 
 
