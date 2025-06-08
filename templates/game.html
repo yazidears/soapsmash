@@ -18,7 +18,7 @@
 <body>
     <div id="game-canvas-container-core"></div>
     <script>
-        const PLAYER_RADIUS_C = 15;
+        const PLAYER_RADIUS_C = 25; // Increased soap size for easier gameplay
         const MAX_CHARGE_C = 100;
         const CHARGE_RATE_C = 2.5;
         const DASH_BASE_VELOCITY_C = 8;
@@ -287,7 +287,7 @@
                 for (let i = 0; i < 5; i++) {
                     simpleEffects_c.push({
                         type: 'line',
-                        p1: pos.copy().add(p5.Vector.random2D().mult(pA.radius * 0.2)), // Start near player edge
+                        p1: pos.copy().add(p5.Vector.random2D().mult(PLAYER_RADIUS_C * 0.2)), // Start near player edge
                         p2: pos.copy().sub(dir.copy().mult(random(15, 25) + i*2)).add(p5.Vector.random2D().mult(3)), // Trail effect
                         color: color(red(clr), green(clr), blue(clr), 120 - i*20),
                         life: 8 - i
@@ -374,7 +374,7 @@
                     stroke(ef.color); strokeWeight(map(ef.life, 0, ef.type === 'line' ? 10 : 15, 0.5, 1.5)); // Make lines thinner as they fade
                     line(ef.p1.x, ef.p1.y, ef.p2.x, ef.p2.y);
                 } else if (ef.type === 'spark' || ef.type === 'swirl') {
-                    let alpha = map(ef.life, 0, (ef.type === 'swirl'?30:15), 0, red(ef.color)._array[3] || 255); // Fade alpha
+                    let alpha = map(ef.life, 0, (ef.type === 'swirl'?30:15), 0, alpha(ef.color)); // Fade alpha using existing color transparency
                     fill(red(ef.color), green(ef.color), blue(ef.color), alpha);
                     noStroke();
                     ellipse(ef.pos.x, ef.pos.y, ef.radius * (ef.life / (ef.type === 'swirl'?30:15)) );
